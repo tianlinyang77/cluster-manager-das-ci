@@ -1,7 +1,7 @@
 # PR CI
 
 This repository runs path-aware unit tests for pull requests targeting `main`.
-There is no nightly workflow and no custom PR planner.
+There is no nightly workflow and no custom PR planner. A separate cluster ST workflow runs after qualifying changes reach `main`.
 
 ## Module routing
 
@@ -68,3 +68,48 @@ read-only and runs with `--network none`.
 Because these are new `pull_request_target` workflows, the first real run can
 only occur after the reviewed workflows are present on the default branch and
 a new qualifying pull-request event is emitted.
+
+
+## Cluster ST
+
+`st-cluster.yml` runs `tests/st/ci_entry.py` directly on the same `ci-general`
+runner group and `[self-hosted, ci, nmz2, bw1100]` labels. It does not reuse the
+network-disabled PR unit-test container and does not change the existing PR jobs.
+A push to `main` triggers ST when it changes files under `hcu-envcheck/`,
+`hcu-training-reliability/`, or `hcu_resiliency_ext/`. The workflow checks out
+the pushed commit with credential persistence disabled. Actions are pinned to commits.
+
+Configure repository variables `ST_CONTROL_PYTHON`, `ST_SHARED_ROOT`, and
+`ST_HOSTFILE`. The hostfile is an
+allocated pool supplied by operations/resource scheduling, not a discovery scan.
+Real addresses and runner-specific paths are not embedded in the workflow.
+With two 8-GPU nodes in the hostfile, the default CI site template uses one
+node for training and the other as standby. Adjust the topology in `site.ci.toml`.
+See `tests/st/README.md` for the complete site template and prerequisites.
+
+The runner Python must already contain pytest, ClusterShell and reliability's
+controller dependencies. Git, SSH, Bash and clush, existing node SSH access,
+same-path shared storage, the training image and the pinned per-node NHC deployment
+are required. Training libraries remain in the training image; this workflow
+neither installs them nor bootstraps NHC.
+Multi-node training uses MPI inside the image; this Docker ST does not require
+a controller-host MPI installation.
+
+The fixed `hcu-cluster-st` concurrency group serializes this repository's ST runs
+across refs; `cancel-in-progress` is false. External use of those machines must
+still be coordinated by the resource owner. The 90-minute workflow guard is
+provisional and separate from each case's timeout settings.
+
+ST stores ownership receipts in shared storage and provides cancellation cleanup.
+The always-run fallback checks only this run's exact identities; mismatches fail
+rather than deleting unknown resources. Even a closed case must pass the manager
+exit check before its containers can be removed; an unconfirmed stop leaves them
+untouched and fails cleanup. A lost runner requires recovery-time
+receipt reconciliation. Logs/JSON/TSV and checkpoint file metadata are uploaded
+with `upload-artifact`; weights and Bridge source trees remain on shared storage.
+Bridge preparation writes detailed Git logs and manifests into the CI run's
+`bridge-dependency` directory, including fetch failures and Git timeouts.
+No ST run is performed by merely collecting tests or omitting `--site`.
+
+Each triggered ST run starts with the offline ST regression suite. Changes
+limited to `tests/st/` or workflow files do not trigger a cluster run.
