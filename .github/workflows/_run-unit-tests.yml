@@ -87,7 +87,7 @@ jobs:
           pythonpath="/ci-deps:/workspace"
           pythonpath="${pythonpath}:/workspace/hcu-training-reliability"
           pythonpath="${pythonpath}:/workspace/hcu-envcheck"
-          pythonpath="${pythonpath}:/workspace/hcu_resiliency_ext"
+          pythonpath="${pythonpath}:/workspace/nvidia_resiliency_ext"
           pythonpath="${pythonpath}:/workspace/hygon-ft-k8s"
           pythonpath="${pythonpath}:/workspace/stack-analyzer"
 

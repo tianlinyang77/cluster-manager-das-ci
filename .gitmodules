@@ -1,6 +1,7 @@
-[submodule "hcu_resiliency_ext/nvidia_resiliency_ext"]
-	path = hcu_resiliency_ext/nvidia_resiliency_ext
+[submodule "nvidia_resiliency_ext/nvidia_resiliency_ext"]
+	path = nvidia_resiliency_ext/nvidia_resiliency_ext
 	url = https://github.com/NVIDIA/nvidia-resiliency-ext.git
+	branch = main
 [submodule "hcu-envcheck/third_party/flux"]
 	path = hcu-envcheck/third-party/flux
 	url = http://42.228.13.241:10068/dcutoolkit/deeplearing/flux.git

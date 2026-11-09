@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hcu-resiliency-ext"
+version = "0.1.0"
+description = "HCU adaptation layer for NVIDIA Resiliency Extension"
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+license = { text = "Apache-2.0" }
+authors = [
+  { name = "Hygon Information Technology Co., Ltd." },
+]
+dependencies = [
+  "nvidia-resiliency-ext>=0.7,<0.8",
+]
+
+[project.optional-dependencies]
+telemetry = [
+  "nv-one-logger-core",
+  "nv-one-logger-training-telemetry",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["hcu_resiliency_ext*"]
+
+[tool.setuptools]
+include-package-data = true
+
+[project.scripts]
+nvidia-resiliency-ext-build = "hcu_resiliency_ext.build_nvidia_resiliency_ext:main"

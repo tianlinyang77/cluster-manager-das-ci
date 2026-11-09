@@ -23,7 +23,7 @@ HCU 大模型训练可靠性工具集：面向大规模 HCU分布式训练，提
    （集群环境检查）      （裸金属/Slurm/Docker）         （Megatron 框架）
                         hygon-ft-k8s
                         （Kubernetes）
-                        ＋ hcu_resiliency_ext（可选，PyTorch 训练韧性库 HCU 适配）
+                        ＋ nvidia_resiliency_ext（可选，PyTorch 训练韧性库 HCU 适配）
 ```
 
 面向在 HCU 集群开展大模型训练的算法、基础设施与集群运维工程师，也可供深度学习平台开发厂商集成，用于构建开箱即用的训练可靠性能力。
@@ -82,7 +82,7 @@ HCU 大模型训练可靠性工具集：面向大规模 HCU分布式训练，提
 | 拓扑分析 | 按 Megatron PP/TP/DP 并行拓扑定位异常 rank | ✅ |
 | 隔离建议 | 输出建议驱逐机器列表（只建议，不自动驱逐） | ✅ |
 
-### PyTorch 训练韧性库（可选）：hcu_resiliency_ext
+### PyTorch 训练韧性库（可选）：nvidia_resiliency_ext
 
 基于 NVIDIA `nvidia-resiliency-ext`，功能与上游保持一致，针对海光 HCU 完成适配。
 
@@ -93,7 +93,10 @@ HCU 大模型训练可靠性工具集：面向大规模 HCU分布式训练，提
 | 异步/本地 checkpoint | 高效异步与本地 checkpoint 保存 | ✅ |
 | 掉队者检测 | 按 rank 监测 GPU/CPU 性能，标记拖慢训练的节点 | ✅ |
 
-本目录是上游库的海光 HCU 适配补丁：在固定 commit 的上游源码上注入适配实现，不能独立 `pip install`。
+本目录是上游库的海光 HCU 适配层和自动构建工程：在临时副本中注入适配实现并生成 wheel，不直接修改固定 commit 的上游 submodule 工作树。
+
+- [README](nvidia_resiliency_ext/README.md)
+- [安装与验证](nvidia_resiliency_ext/docs/INSTALLATION_CN.md)
 
 ## 🗂️ 目录结构
 
@@ -105,7 +108,7 @@ cluster-manager-das/
 ├── hcu-training-reliability/   # 长稳训练监控与故障恢复
 ├── hygon-ft-k8s/               # Kubernetes 训练容错
 ├── stack-analyzer/             # hang 堆栈诊断
-└── hcu_resiliency_ext/         # PyTorch 训练韧性库 HCU 适配
+└── nvidia_resiliency_ext/      # PyTorch 训练韧性库 HCU 适配与 wheel 构建
     └── nvidia_resiliency_ext/  #   子模块：NVIDIA 上游源码（固定 commit）
 ```
 
@@ -136,6 +139,7 @@ bash bin/hcu-cluster-run shared-conda platform,resource -f hostfile --env-script
 - [hcu-training-reliability 源码启动](hcu-training-reliability/README.md)
 - [hygon-ft-k8s 快速开始](hygon-ft-k8s/README.md)
 - [stack-analyzer 内置演示](stack-analyzer/README.md)
+- [nvidia_resiliency_ext 构建与安装](nvidia_resiliency_ext/README.md)
 - [端到端使用流程](docs/END_TO_END_WORKFLOW_CN.md)
 
 ## 📦 安装指南
@@ -146,7 +150,7 @@ bash bin/hcu-cluster-run shared-conda platform,resource -f hostfile --env-script
 | hcu-training-reliability | 源码直接运行（需具备 `setup.py` 声明的依赖），可选 `pip install -e .` |
 | hygon-ft-k8s | 构建控制器镜像后在管理节点 `bash start.sh install` |
 | stack-analyzer | `pip install .` |
-| hcu_resiliency_ext | 在固定 commit 的上游源码上注入适配，见[安装说明](hcu_resiliency_ext/docs/INSTALLATION_CN.md) |
+| nvidia_resiliency_ext | 自动构建注入 HCU 适配器的 wheel，见[安装说明](nvidia_resiliency_ext/docs/INSTALLATION_CN.md) |
 
 ## 📘 使用指南
 
@@ -158,6 +162,7 @@ bash bin/hcu-cluster-run shared-conda platform,resource -f hostfile --env-script
 | hcu-training-reliability | [部署与启动](hcu-training-reliability/docs/deployment_guide.md)、[故障恢复与日常操作](hcu-training-reliability/docs/recovery_workflow.md)、[配置参考](hcu-training-reliability/docs/config_guide.md) |
 | hygon-ft-k8s | [安装指南](hygon-ft-k8s/docs/INSTALLATION_CN.md)、[运行与恢复](hygon-ft-k8s/docs/OPERATIONS_AND_RECOVERY_CN.md)、[故障处理语义](hygon-ft-k8s/docs/FAULT_HANDLING_CN.md) |
 | stack-analyzer | [采集与分析操作手册](stack-analyzer/docs/COLLECTION_AND_ANALYSIS_CN.md)、[分析处理链路](stack-analyzer/docs/ANALYSIS_PIPELINE_CN.md) |
+| nvidia_resiliency_ext | [构建与使用](nvidia_resiliency_ext/README.md)、[安装与验证](nvidia_resiliency_ext/docs/INSTALLATION_CN.md) |
 
 ## 🔒 安全边界
 
@@ -165,12 +170,12 @@ bash bin/hcu-cluster-run shared-conda platform,resource -f hostfile --env-script
 - `hcu-training-reliability` 当前可能按 `python` 关键字终止目标节点进程，要求训练节点独占。
 - `hygon-ft-k8s` 可能创建集群级资源、taint 节点、删除 Pod 并触发任务重建。
 - `stack-analyzer` 需要 ptrace 权限；分析结果是诊断证据，不会自动执行驱逐。
-- `hcu_resiliency_ext` 只能在已验证的第三方库版本上使用。
+- `nvidia_resiliency_ext` 只能在已验证的第三方库版本上使用。
 
 ## 🧩 兼容性
 
 - Python ≥3.10，Bash，目标节点免密 SSH。
-- 训练框架：Megatron 系训练框架（stack-analyzer 拓扑分析与 hcu_resiliency_ext 适配场景）。
+- 训练框架：Megatron 系训练框架（stack-analyzer 拓扑分析与 nvidia_resiliency_ext 适配场景）。
 - Kubernetes：需要 Volcano / Kubeflow Training Operator 配合（hygon-ft-k8s 前置条件）。
 - 资源调度：Slurm 由用户在工具外申请节点（hcu-envcheck），hcu-training-reliability 支持 Slurm 作业校验。
 
