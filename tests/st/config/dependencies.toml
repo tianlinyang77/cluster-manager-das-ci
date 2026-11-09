@@ -1,0 +1,10 @@
+# Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+# SPDX-License-Identifier: Apache-2.0
+[bridge]
+url = "https://github.com/HYGON-AI/Megatron-bridge-das.git"
+# main branch revision selected by the user; never follow later main updates.
+commit = "4430df5388a84b0ae88c8633ebc8fe5488b8385c"
+# GLM53 example requires the upstream Bridge's pinned .dev.commit.
+mcore = "dev"
+# Timeout for each Git command; this is separate from training stage timeouts.
+command_timeout = 600

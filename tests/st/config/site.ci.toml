@@ -1,0 +1,70 @@
+# Rendered by ci_entry.py; do not pass this template directly to run_st.py.
+[site]
+nodes = [] # Populated from ST_HOSTFILE or ST_NODES; never scan for machines.
+image = "megatron_train:0.19.2-ubuntu22.04-dtk2610-py3.12-sf_b075-20261014-1059"
+release_nodes = []
+protected_containers = []
+
+[paths]
+repo_root = "__REPO_ROOT__"
+shared_root = "__RUN_ROOT__/cases"
+control_python = "__CONTROL_PYTHON__"
+bridge_root = ""
+env_script = "__RUN_ROOT__/env/container.ci.env.sh"
+
+[ssh]
+port = 22
+connect_timeout = 10
+options = []
+
+[reliability]
+env_script = ""
+train_config = "auto:glm53-st"
+
+[reliability.env]
+MPI_HOST_SSH_PORT = "22"
+DOCKER_CONTAINER_SSH_PORT = "36000"
+DOCKER_HOST_SHARE_ROOT = "__SHARED_ROOT__"
+DOCKER_CONTAINER_SHARE_ROOT = "__SHARED_ROOT__"
+RUN_NHC_EXEC_MODE = "container"
+DOCKER_RUN_ARGS = "--device=/dev/kfd --device=/dev/dri -v /dev/shm:/dev/shm --group-add video --cap-add=SYS_PTRACE --security-opt seccomp=unconfined -u root -v /tmp/hcu-st:/tmp/hcu-st -v __NHC_ROOT__:/opt/hcu-st-run-nhc -v __NHC_ROOT__/bin/run_nhc:/usr/local/bin/run_nhc:ro"
+
+[training]
+ready = true # This workload is verified; CI still validates its actual environment.
+script = "__REPO_ROOT__/tests/st/payloads/train_st.sh"
+python = "python3"
+worker_pattern = "run_recipe.py"
+nodes = 1 # A two-node pool gives one training node and one spare.
+gpus = 8
+local_interval = 0 # Temporarily disabled; set 5 to restore local checkpointing.
+global_interval = 10
+synchronous = true
+inner_restarts = 0
+train_iters = 2000
+
+[training.env]
+TRAIN_ENV_SCRIPT = "__RUN_ROOT__/env/container.ci.env.sh"
+PORT = "36000"
+
+[timeouts]
+# Temporary protection limits from the successful trial, not calibrated CI SLAs.
+# total is PER CASE; workflow timeout includes both cases, prepare and cleanup.
+command = 120
+prepare = 300
+startup = 600
+checkpoint = 600
+recovery = 600
+collect = 120
+cleanup = 120
+total = 1800
+poll = 5
+
+[platform]
+# Site-specific reviewed exceptions; raw WARN receipts are retained.
+ignored_reason_codes = ["RDMA_USERSPACE_DEVICE_OPEN_FAILED", "IB_ENDPOINT_EVIDENCE_MISSING", "IB_CONGESTION_SIGNAL_GROWTH"]
+
+[ci]
+# Existing per-node deployment; this workflow never installs NHC or changes the image.
+nhc_root = "/tmp/hcu-st-nhc-3e0016b-r6b"
+nhc_commit = "3e0016b4a999ca43638ff2009d8a315ede8f2f7f"
+nhc_binary_sha256 = "3441f751305e41c510206b0f37b8a1fa4f18c7ae527c65af866e036d29ad17f5"
