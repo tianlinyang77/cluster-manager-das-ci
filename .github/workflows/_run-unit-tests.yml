@@ -120,6 +120,12 @@ jobs:
                 test_path=hcu-training-reliability/test/unit
                 export PYTHONPATH="${PYTHONPATH}:/workspace/hcu-training-reliability"
               fi
+              if [[ "$test_path" == hcu_resiliency_ext/tests && ! -d "$test_path" && -d nvidia_resiliency_ext/tests ]]; then
+                test_path=nvidia_resiliency_ext/tests
+              fi
+              if [[ "$test_path" == nvidia_resiliency_ext/tests ]]; then
+                export PYTHONPATH="${PYTHONPATH}:/workspace/nvidia_resiliency_ext"
+              fi
               exec python3 -m pytest -c /dev/null --rootdir=/workspace \
                 --import-mode=importlib -p no:cacheprovider -q "$test_path"
             ' ci-tests "${{ inputs.test-path }}"

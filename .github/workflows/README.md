@@ -36,6 +36,12 @@ Existing failed runs retain the old target-branch workflow. After this change
 reaches `main`, emit a fresh qualifying PR event (for example, a new commit or
 closing and reopening the PR) to test an existing fork PR.
 
+During the resiliency directory rename, an old caller targeting
+`hcu_resiliency_ext/tests` also supports PR source with `nvidia_resiliency_ext/tests`.
+The shared workflow switches the test target only when the old directory is
+absent, and adds the new project root to the Python import path for the new
+target. PR #16 updates the module routing and names.
+
 ## Runner and image preparation
 
 Authorize this repository for runner group `ci-general`. The runner must have
