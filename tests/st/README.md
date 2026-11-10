@@ -239,7 +239,7 @@ python3 -B -m pytest -c tests/st/pytest.ini tests/st/unit -q
 | --- | --- | --- |
 | `ST_KUBECONFIG` | secret | 测试集群账号 kubeconfig；不要上传生产集群管理员凭据 |
 | `ST_K8S_NODES` | variable | 两个分配节点，空格分隔，例如 `test-node-a test-node-b` |
-| `ST_TRAINING_IMAGE` | variable | 已验证训练镜像 `registry/image@sha256:<64位摘要>` |
+| `ST_TRAINING_IMAGE` | variable | 控制任务和训练共用的已验证镜像 `registry/image@sha256:<64位摘要>` |
 | `ST_SHARED_ROOT` | variable | 默认 `/ci_public/cluster-manager-st`，须在 checkout 外 |
 | `ST_K8S_NAMESPACE` | variable | 默认 `arc-runners`，须存在共享 PVC 和卡池 ConfigMap |
 | `ST_ALLOW_DEGRADED` | variable | 默认 false；经授权使用异常节点时显式设置 true，只放宽本轮 Pod 的健康标签过滤 |

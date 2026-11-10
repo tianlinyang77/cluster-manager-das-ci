@@ -29,7 +29,7 @@ jobs:
     name: Kubernetes ST control regressions
     runs-on: hygon-cpu
     container:
-      image: python:3.12.12-bookworm
+      image: ${{ vars.ST_TRAINING_IMAGE }}
     timeout-minutes: 10
     steps:
       - name: Checkout test source
@@ -55,7 +55,7 @@ jobs:
     # The controller must not reserve the cards needed by the training Pods.
     runs-on: hygon-cpu
     container:
-      image: python:3.12.12-bookworm
+      image: ${{ vars.ST_TRAINING_IMAGE }}
     timeout-minutes: 90
     env:
       ST_HCU_POOL: hygon-bw1100-8card
