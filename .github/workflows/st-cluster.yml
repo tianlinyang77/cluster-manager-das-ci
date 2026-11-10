@@ -1,89 +1,142 @@
+# Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+# SPDX-License-Identifier: Apache-2.0
 name: Cluster ST
 
 on:
-  push:
+  pull_request_target:
     branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
+      - "tests/st/**"
       - "hcu-envcheck/**"
       - "hcu-training-reliability/**"
       - "hcu_resiliency_ext/**"
+      - "nvidia_resiliency_ext/**"
+      - "hygon-ft-k8s/**"
+      - ".github/ci/k8s/**"
+      - ".github/workflows/st-cluster.yml"
+  workflow_dispatch:
 
 permissions:
   contents: read
 
-# Serialize cluster users across refs; do not interrupt an older recovery case.
 concurrency:
   group: hcu-cluster-st
   cancel-in-progress: false
 
 jobs:
-  st:
-    name: Environment and worker recovery ST
-    runs-on:
-      group: ci-general
-      labels: [self-hosted, ci, nmz2, bw1100]
-    # Temporary workflow guard, covering prepare, two per-case budgets and cleanup.
-    timeout-minutes: 90
-    env:
-      ST_CONTROL_PYTHON: ${{ vars.ST_CONTROL_PYTHON }}
-      ST_SHARED_ROOT: ${{ vars.ST_SHARED_ROOT }}
-      ST_HOSTFILE: ${{ vars.ST_HOSTFILE }}
-      PYTHONDONTWRITEBYTECODE: '1'
-      PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
+  unit:
+    name: Kubernetes ST control regressions
+    runs-on: hygon-cpu
+    container:
+      image: python:3.12.12-bookworm
+    timeout-minutes: 10
     steps:
-      - name: Checkout pushed commit
+      - name: Checkout test source
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          ref: ${{ github.sha }}
-          fetch-depth: 1
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Run offline control and checkpoint regressions
+        shell: bash
+        env:
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check \
+            pytest==9.1.1 requests==2.34.2 PyYAML==6.0.3 websocket-client==1.9.2
+          python3 -B -m pytest -c tests/st/pytest.ini \
+            tests/st/unit/test_k8s_ci.py tests/st/unit/test_checkpoint_mode.py -q
+
+  recovery:
+    name: Cross-node checkpoint recovery
+    needs: unit
+    # The controller must not reserve the cards needed by the training Pods.
+    runs-on: hygon-cpu
+    container:
+      image: python:3.12.12-bookworm
+    timeout-minutes: 90
+    env:
+      ST_HCU_POOL: hygon-bw1100-8card
+      ST_K8S_NAMESPACE: ${{ vars.ST_K8S_NAMESPACE || 'arc-runners' }}
+      ST_K8S_NODES: ${{ vars.ST_K8S_NODES }}
+      ST_TRAINING_IMAGE: ${{ vars.ST_TRAINING_IMAGE }}
+      ST_ALLOW_DEGRADED: ${{ vars.ST_ALLOW_DEGRADED || 'false' }}
+      ST_SHARED_ROOT: ${{ vars.ST_SHARED_ROOT || '/ci_public/cluster-manager-st' }}
+      ST_RUN_KEY: ${{ github.run_id }}-${{ github.run_attempt }}
+      ST_SOURCE_ROOT: ${{ github.workspace }}/source
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - name: Configure per-run paths
+        shell: bash
+        run: |
+          printf 'ST_K8S_ARTIFACTS=%s\nKUBECONFIG=%s\nPYTHONPATH=%s\n' \
+            "$RUNNER_TEMP/cluster-st-artifacts" "$RUNNER_TEMP/cluster-st.kubeconfig" \
+            "$RUNNER_TEMP/st-control-deps" >> "$GITHUB_ENV"
+
+      - name: Checkout trusted controller
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          path: controller
           persist-credentials: false
 
-      - name: Validate CI variables
+      - name: Checkout training source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          path: source
+          persist-credentials: false
+
+      - name: Configure cluster access and control dependencies
         shell: bash
+        env:
+          ST_KUBECONFIG: ${{ secrets.ST_KUBECONFIG }}
         run: |
           set -euo pipefail
-          : "${ST_CONTROL_PYTHON:?Set ST_CONTROL_PYTHON}"
-          : "${ST_SHARED_ROOT:?Set ST_SHARED_ROOT}"
-          : "${ST_HOSTFILE:?Set ST_HOSTFILE}"
-          [[ "$ST_CONTROL_PYTHON" == /* && -x "$ST_CONTROL_PYTHON" ]]
-          [[ "$ST_SHARED_ROOT" == /* && "$ST_HOSTFILE" == /* && -r "$ST_HOSTFILE" ]]
+          : "${ST_KUBECONFIG:?Set the ST_KUBECONFIG repository secret for the test cluster}"
+          : "${ST_K8S_NODES:?Set ST_K8S_NODES to the fault node and standby node}"
+          : "${ST_TRAINING_IMAGE:?Set a digest-pinned ST_TRAINING_IMAGE}"
+          mkdir -p "$ST_K8S_ARTIFACTS"
+          umask 077
+          printf '%s' "$ST_KUBECONFIG" > "$KUBECONFIG"
+          python3 -m pip install --disable-pip-version-check \
+            --target "$PYTHONPATH" --report "$ST_K8S_ARTIFACTS/control-pip-report.json" \
+            kubernetes==30.1.0 requests==2.34.2 PyYAML==6.0.3 websocket-client==1.9.2
 
-      - name: Run offline ST regressions
+      - name: Prepare fixed Bridge source and private runtime dependencies
         shell: bash
-        run: |
-          set -euo pipefail
-          "$ST_CONTROL_PYTHON" -B -m pytest -c tests/st/pytest.ini tests/st/unit -q
+        run: python3 -B controller/.github/ci/k8s/prepare.py
 
-      - name: Run allocated-node ST
+      - name: Inject one scoped fault and verify cross-node recovery
         shell: bash
-        run: |
-          set -euo pipefail
-          artifacts="$RUNNER_TEMP/hcu-st-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/artifacts"
-          mkdir -p "$artifacts"
-          git rev-parse HEAD > "$artifacts/source-commit.txt"
-          "$ST_CONTROL_PYTHON" -B tests/st/ci_entry.py run \
-            --run-key "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
-            --artifacts "$artifacts" 2>&1 | tee "$artifacts/entry.log"
+        run: python3 -B controller/.github/ci/k8s/run_recovery.py
 
-      - name: Recheck owned resources and collect receipts
+      - name: Confirm shared checkpoints after training Pod deletion
+        shell: bash
+        run: python3 -B controller/.github/ci/k8s/collect.py
+
+      - name: Recheck owned resources and remove the test taint
         if: always()
         shell: bash
         run: |
           set -euo pipefail
-          run="$ST_SHARED_ROOT/ci-runs/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
-          artifacts="$RUNNER_TEMP/hcu-st-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/artifacts"
-          if [[ -x "$ST_CONTROL_PYTHON" && -f "$run/ci-run.json" ]]; then
-            status=0
-            "$ST_CONTROL_PYTHON" -B tests/st/ci_entry.py cleanup --run-root "$run" || status=$?
-            "$ST_CONTROL_PYTHON" -B tests/st/ci_entry.py collect --run-root "$run" --artifacts "$artifacts" || status=$?
-            exit "$status"
+          if [[ -f "$KUBECONFIG" && -f "$ST_K8S_ARTIFACTS/active-crossnode.json" ]]; then
+            python3 -B controller/.github/ci/k8s/cleanup.py
           fi
 
-      - name: Upload ST receipts
+      - name: Remove temporary cluster credentials
+        if: always()
+        shell: bash
+        run: rm -f -- "$KUBECONFIG"
+
+      - name: Upload ST evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: cluster-st-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/hcu-st-${{ github.run_id }}-${{ github.run_attempt }}/artifacts
+          path: ${{ runner.temp }}/cluster-st-artifacts
           if-no-files-found: warn
           retention-days: 14

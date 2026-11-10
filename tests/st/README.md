@@ -223,120 +223,56 @@ python3 -B -m pytest -c tests/st/pytest.ini tests/st/unit -q
 控制端需要 Git；`bridge.command_timeout` 是每条 Git 命令预算，与训练阶段超时独立。
 
 
-## 独立 CI：由 ST_HOSTFILE 提供已分配节点
+## Kubernetes CI：跨节点 checkpoint 恢复
 
-入口为 `tests/st/ci_entry.py`，工作流为 `.github/workflows/st-cluster.yml`。
-使用现有 runner group `ci-general`、标签 `[self-hosted, ci, nmz2, bw1100]`，
-在 runner 宿主的既有 Python 环境执行；不复用 PR 单测的断网隔离容器。
-推送到 `main` 时，只有 `hcu-envcheck/`、`hcu-training-reliability/` 或
-`hcu_resiliency_ext/` 有文件变更才自动运行。工作流检出本次推送的提交，先跑离线单测，再运行真实 ST。
-控制端 Python、训练依赖和 NHC 由管理员预先准备。
+`st-cluster.yml` 改用 Kubernetes，相关路径的 PR 自动执行，也支持手工触发；没有 push 或 nightly 测试。
+原有宿主 SSH/Docker CLI 保留；ENV-001 尚未迁移到新工作流。
 
-在仓库 Actions Variables 设置以下三项。
+训练资源读取 `job-template-hygon-bw1100-8card`，申请 8 卡，沿用该池 CPU、内存、共享内存和 Volcano 队列。
+控制任务使用不占卡的 `hygon-cpu` runner，避免重复占住训练资源。
+两台节点必须明确分配：第一台模拟故障，第二台备用；本工作流不解除 cordon。
+控制容器和训练 Pod 均需挂载同一 `ci-public` RWX PVC 到 `/ci_public`。
 
-| Variable | 内容 |
-| --- | --- |
-| `ST_CONTROL_PYTHON` | runner 上已有的 Python 3.11/3.12 可执行文件绝对路径 |
-| `ST_SHARED_ROOT` | runner、节点及容器同路径可见的共享根目录，必须在 checkout 外 |
-| `ST_HOSTFILE` | runner 上可读的、由管理员或资源平台提供的已分配节点文件绝对路径 |
+### 首次配置
 
-hostfile 每行一个真实主机名或 IPv4，允许空行和整行 `#` 注释，拒绝重复、`slots=N`、范围表达式和 user@host。
-手工服务器验证也可使用 `ST_NODES` 环境变量，内容为逗号或空白分隔的已分配节点；与 `ST_HOSTFILE` 二选一。
-共享工作目录统一使用 `ST_SHARED_ROOT`。例如：
+| 配置项 | 类型 | 说明 |
+| --- | --- | --- |
+| `ST_KUBECONFIG` | secret | 测试集群账号 kubeconfig；不要上传生产集群管理员凭据 |
+| `ST_K8S_NODES` | variable | 两个分配节点，空格分隔，例如 `test-node-a test-node-b` |
+| `ST_TRAINING_IMAGE` | variable | 已验证训练镜像 `registry/image@sha256:<64位摘要>` |
+| `ST_SHARED_ROOT` | variable | 默认 `/ci_public/cluster-manager-st`，须在 checkout 外 |
+| `ST_K8S_NAMESPACE` | variable | 默认 `arc-runners`，须存在共享 PVC 和卡池 ConfigMap |
+| `ST_ALLOW_DEGRADED` | variable | 默认 false；经授权使用异常节点时显式设置 true，只放宽本轮 Pod 的健康标签过滤 |
 
-```bash
-export ST_SHARED_ROOT=/shared/hcu-st
-export ST_NODES='node1,node2'
-export ST_CONTROL_PYTHON=/opt/hcu-st/venv/bin/python
-unset ST_HOSTFILE
-"$ST_CONTROL_PYTHON" -B tests/st/ci_entry.py render --run-key review-1
-# 依赖与空闲资源就绪后，将 render 改为 run 并添加 --artifacts /local/artifacts。
-```
+测试账号需要该 namespace 内 ConfigMap、Volcano Job、Pod（含日志、exec）、Event、FaultEvent 及其 status 权限；
+读取两个测试节点、patch 故障节点，以及创建/读取/删除 FaultEvent CRD 的权限。权限应限制到测试环境和明确的故障节点。
+入口不安装生产 FT 控制面、Webhook 或 NodeHealth DaemonSet；发现已有 FaultEvent CRD 时停止，避免重复处理事件。
+[`rbac.example.yaml`](../../.github/ci/k8s/rbac.example.yaml) 提供专用账号权限示例，应用前替换节点名和 namespace；
+RBAC 无法按名称限制 CRD 的 create 权限，因此此账号仅用于经过授权的测试集群。
 
-`ST_NODES` 同样经过节点、训练规模、目录隔离校验，并冻结为本轮 `pool.hostfile`；不跳过 ST 任何真实执行阶段。
-不在 Git 中填写真实 IP，不扫描网络或自动寻找机器。CI 在本轮共享目录冻结节点清单和输入文件哈希，
-再填入 `site.nodes`。模板默认 `training.nodes=1`、`gpus=8`。提供两台各 8 卡的节点时，
-默认拓扑为 1×8＋1 备（一台训练、一台备用）。
-其他拓扑可以调整这两个参数，例如三台单机 4 卡节点使用 `nodes=2`、`gpus=4`，组成 2×4 训练＋1 台备用。
-`training.nodes/gpus` 仍可在 `config/site.ci.toml` 配置，备用数等于池大小减去训练节点数，恢复用例至少需要1备。
+Fork PR 继续自动执行。控制脚本、Bridge 依赖 pin、FaultEvent schema 和临时 FT Operator 都取自受信任的 base commit；
+PR 训练源码只在不挂载 ServiceAccount token、不接收 kubeconfig 或 GitHub 凭据的训练 Pod 内执行。
+因此 PR 中的 Operator 改动须在合入 main 后手工触发验证，不能把 PR 阶段解释为已测试该版本的 Operator。
+新工作流及脚本先合入 main，再通过新的 PR 事件生效。
 
-节点名称需要在计算节点及容器中能解析；仅在 runner 上可用的 SSH 别名不等于训练 rendezvous 地址可解析。
-当前 hcu-envcheck 的 shell 操作与 platform 访问方式要求该池使用同一 SSH 用户和宿主端口22；
-预检会从已有 `ssh -G` 配置解析并校验，不写入或修改 SSH 配置。
+### 验收流程
 
-`site.ci.toml` 是含占位符的模板，不能直接交给 run_st.py。
-CI 入口按以下规则生成真实配置：
+1. 准备固定版本 Bridge，在共享存储生成独立源码、配置和运行记录。Energon 7.4.0 与固定 Bridge lockfile 对齐，只安装到本轮私有前缀。
+2. 首台节点完成真实 torch_dist 保存，确认数据文件和完整 worker 集合。
+3. 注入一个模拟 `NodeHealthCheckFailed` FaultEvent。原生 FT Operator 添加本轮唯一 NoSchedule taint，仅删除指定测试 Pod。
+4. Volcano 依据 PodFailed/PodEvicted 自动 RestartJob；注入前后不修改调度模板。必须确认新 Pod UID、备用节点、完整 worker、非零 checkpoint 加载及更大的后续迭代。
+5. 训练跑完 1000 步且退出码为 0。删除训练 Pod 后，由独立控制容器读取持久化 checkpoint 文件。
+6. 停止临时 Operator，按登记 UID 删除本轮对象，只撤销本轮 taint。日志、版本、文件清单和结果上传 artifact，权重留在共享盘。
 
-- `__REPO_ROOT__`：当前 checkout；每次业务入口使用本次检出的源码。
-- `__CONTROL_PYTHON__`：用户配置的 Python；ST、pytest、reliability 和 envcheck 使用同一控制端解释器。
-  保留 venv 入口路径，不将解释器符号链接解析为基础 Python。
-- `__SHARED_ROOT__`：配置的共享根目录，并同路径挂入专用容器。
-- `__RUN_ROOT__`：`<shared>/ci-runs/<run_id>-<run_attempt>`；已有目录不覆盖。
-- `__NHC_ROOT__`：模板中 `[ci].nhc_root`，为各节点上已经部署的独立 NHC 目录。
-
-模板沿用已验证的 GLM53 缩小配置、镜像、NHC 版本和哈希，但没有真实 CI Python、共享盘或节点地址。
-更换站点时需修改镜像、训练规模、NHC 部署信息和明确审核的 platform 豁免。
-所有 timeout 是上次验证的临时保护上限；`total` 是每条用例预算，workflow 的90分钟为独立保护上限，尚非多轮标定值。
-
-只在本地渲染配置（不会 SSH、拉 Bridge、操作容器或训练）：
+NoSchedule 不驱逐其他现有 Pod，但测试期间其他新任务也会避开模拟故障节点，需事先协调测试池。
+此场景覆盖事件处理、节点隔离、跨机调度和 checkpoint 恢复；真实断电、NHC 硬件探测和 local checkpoint 未覆盖。
+固定 concurrency group 串行运行，cancel-in-progress 为 false。取消时正常收尾，再由 always 步骤补偿清理。
+控制 runner 整体失联后，恢复访问并对原始记录执行：
 
 ```bash
-python3 -B tests/st/ci_entry.py render \
-  --control-python /absolute/path/to/python \
-  --shared-root /shared/hcu-st \
-  --hostfile /absolute/path/to/allocated.hostfile \
-  --run-key local-review-1
+export ST_K8S_ARTIFACTS=/path/to/original/artifacts
+export KUBECONFIG=/path/to/test-cluster.kubeconfig
+python3 -B .github/ci/k8s/cleanup.py
 ```
 
-真实 CI 入口（只有节点、依赖准备齐全后执行）：
-
-```bash
-"$ST_CONTROL_PYTHON" -B tests/st/ci_entry.py run \
-  --run-key "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
-  --artifacts "$RUNNER_TEMP/hcu-st-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/artifacts"
-```
-
-执行顺序为渲染 → 只读前置核验 → Bridge prepare → plan → run --case all → 自有资源收尾 → 证据归档。
-前置核验包含 Python 依赖、Git/SSH/Bash/clush、共享标记可见性、名称解析、镜像 ID、NHC commit/二进制哈希/配置。
-Docker 后端在控制端实际使用 clush 和 SSH；多节点训练的 mpirun 位于镜像内，不要求控制端安装宿主 MPI。
-宿主 hy-smi 探测复用当前 hcu-envcheck 的 idle_probe 初始化逻辑，支持产品已有的 DTK 绝对路径回退。
-镜像已有的训练运行时继续复用。NHC 原生模板未识别 HCU 的覆盖限制不会因预检通过而消失。
-准备 Bridge 使用现有固定 commit 与 MCore pin，源目录放 `<shared>/dependencies/`，不依赖 runner 本地私有缓存。
-每轮依赖 manifest 和配置均随证据归档。没有 HF 资源依赖。
-CI 通过 `prepare --evidence-dir <run>/bridge-dependency` 将详细 Git 日志、manifest 和成功后的生成配置直接写入本轮目录；
-Bridge 拉取失败或 Git 超时时，失败 manifest 与 `bridge-dependency/prepare.log` 也会随 artifact 上传。
-源码仍位于共享盘的 `dependencies/`，不上传源码树；未传 `--evidence-dir` 的手工 prepare 保持原有目录布局。
-
-workflow 使用整个 ST 池的固定 concurrency group、`cancel-in-progress: false`，避免不同 ref 同时占用测试池。
-取消信号优先转交 pytest 正常收尾，资源注册表 `ownership.json` 持久记录 manager 与容器身份；
-补偿清理核验 run ID、case 路径、PID启动时间、容器完整 ID、镜像及容器内 case 标记，仅处理本轮新资源。
-`closed` 仅表示用例收尾已结束，不代替 manager 停止证明；补偿清理仍核验 manager 的实际进程身份和退出状态。
-TERM 后必要时升级 KILL 并再次确认退出；停止失败、PID 身份变化或进程证据无法读取时，该用例容器保留并报告清理失败。
-启动中断尚未登记的容器只通过精确名称查询，进一步核验身份与标记后按完整 ID 处理。
-身份不匹配时保留资源并报错，不执行全局 docker prune、模糊名称或进程匹配清理。
-runner 失联/断电时不能保证即时收尾，恢复后可以对原 run 目录执行：
-
-```bash
-python3 -B tests/st/ci_entry.py cleanup --run-root /shared/hcu-st/ci-runs/123-1
-python3 -B tests/st/ci_entry.py collect --run-root /shared/hcu-st/ci-runs/123-1 --artifacts /local/artifacts
-```
-
-每轮保留原始 envcheck 报告、ST/manager/attempt 日志、结果和资源注册表；artifact 不包含 checkpoint 权重，
-只包含文件路径/尺寸清单，checkpoint 继续保留在共享盘。任一测试、收尾或证据采集失败都会保持非零退出码。
-
-hcu-envcheck 适配读取原生 idle `report.json`、容器状态 `results.tsv` 和公开分阶段 platform `.state/report.json`（同时兼容旧 `cluster-result.json`），
-按字段和精确节点覆盖校验，生成 `st-view/results.json` 供 ST 使用；不会覆盖原始事实。
-ST 将同一受测版本的 `hcu_envcheck/`、`cluster_run/` 原样冻结到用例共享目录 `envcheck-source/`，
-以该目录作为 `--container-workdir`，让容器内的执行与报告器可以导入受测模块；文件哈希存入 `envcheck-source.json`。
-分阶段 platform 的退出码为 PASS=0、WARN=2、FAIL=1；ST 核对最终报告、执行覆盖、预检、清理及逐节点检查。
-WARN 原因码由同版原生规则读取校验后的原始日志得到，逐项与报告对照；采集失败、缺失证据不能豁免。
-
-CI 参数配置好后仍需确认 runner 能访问目标节点，且对应 hcu-envcheck 和 ST 源码已包含在待测提交中。
-当前默认 `release_nodes=[]`，BUSY 会阻断，不停止业务容器。
-
-内置 GLM53 用例在 leader 包装层中先持共享文件锁、串行执行同版 MCore dataset helper 的 `make`，成功后才启动分布式训练。
-这样各节点 LOCAL_RANK=0 的后续 make 使用已构建产物，避免在共享源码目录同时链接同一扩展；失败保留真实退出码和原始日志，禁止继续训练。
-
-NHC 的逐节点模板应在与 ST 相同镜像、相同权限的专用容器内用原生生成器采集；宿主机普通用户采集可能留下 Unknown PCIe 基线。
-本轮新隔离前缀通过三节点原生检查；原生模板仍不识别 HCU，HCU 专项硬件检查未覆盖，不能据此声称完整硬件验收。
-ST 的实际卡数、全局 rank、故障替换与 checkpoint 加载证据独立保留。
+配置缺失、资源不足、恢复或清理失败均不能标记 PASS。

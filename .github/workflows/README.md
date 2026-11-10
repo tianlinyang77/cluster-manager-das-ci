@@ -119,3 +119,11 @@ No ST run is performed by merely collecting tests or omitting `--site`.
 
 Each triggered ST run starts with the offline ST regression suite. Changes
 limited to `tests/st/` or workflow files do not trigger a cluster run.
+
+## Kubernetes recovery ST
+
+`st-cluster.yml` runs cross-node checkpoint recovery on matching PRs and
+manual dispatches. Its controller uses `hygon-cpu`; training
+resources come from the `hygon-bw1100-8card` pool template. See
+[the ST guide](../../tests/st/README.md) for credentials, allocated nodes,
+coverage, isolation impact, and compensating cleanup.
