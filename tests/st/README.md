@@ -229,7 +229,7 @@ python3 -B -m pytest -c tests/st/pytest.ini tests/st/unit -q
 原有宿主 SSH/Docker CLI 保留；ENV-001 尚未迁移到新工作流。
 
 训练资源读取 `job-template-hygon-bw1100-8card`，申请 8 卡，沿用该池 CPU、内存、共享内存和 Volcano 队列。
-控制任务使用不占卡的 `hygon-cpu` runner，避免重复占住训练资源。
+控制任务在支持镜像的无卡 `hygon-build` 池运行，训练 Pod 独立申请 8 卡。
 两台节点必须明确分配：第一台模拟故障，第二台备用；本工作流不解除 cordon。
 控制容器和训练 Pod 均需挂载同一 `ci-public` RWX PVC 到 `/ci_public`。
 

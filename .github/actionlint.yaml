@@ -1,6 +1,6 @@
 self-hosted-runner:
   labels:
-    - hygon-cpu
+    - hygon-build
     - bw1100
     - ci
     - nmz2

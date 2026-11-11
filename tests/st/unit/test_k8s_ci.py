@@ -2,10 +2,13 @@
 # SPDX-License-Identifier: Apache-2.0
 """CI input boundaries and the exact API operations used by compensating cleanup."""
 import importlib.util
+import io
 import json
+import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path, PurePosixPath
 import sys
+import subprocess
 import threading
 
 import pytest
@@ -16,7 +19,8 @@ sys.path.insert(0, str(SCRIPTS))
 spec = importlib.util.spec_from_file_location("k8s_prepare", SCRIPTS / "prepare.py")
 prepare = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(prepare)
-from transport import cleanup_owned
+import transport
+from transport import cleanup_owned, finalize_run
 
 
 def environment(tmp_path):
@@ -141,3 +145,108 @@ def test_cleanup_uses_recorded_uids_and_removes_only_the_exact_test_taint(tmp_pa
     assert deletes["/api/v1/namespaces/test-ns/configmaps/case-1"]["preconditions"] == {"uid": "cm-uid"}
     assert deletes["/apis/ft.hygon.io/v1alpha1/namespaces/test-ns/faultevents/case-1"]["preconditions"] == {"uid": "fault-uid"}
     assert receipt["cleanup_confirmed"] and receipt["node_taint_removed"]
+
+
+@pytest.mark.parametrize("failure_at", ["terminate", "wait"])
+def test_operator_stop_failure_still_cleans_resources_and_saves_result(tmp_path, monkeypatch, failure_at):
+    class Operator:
+        def terminate(self):
+            if failure_at == "terminate":
+                raise OSError("stop failed")
+
+        def wait(self, timeout):
+            raise OSError("stop failed")
+
+    calls = []
+    def cleanup(session, server, receipt, evidence):
+        calls.append(evidence)
+        receipt["cleanup_confirmed"] = True
+    monkeypatch.setattr(transport, "cleanup_owned", cleanup)
+    receipt = dict(status="FAIL", error="original training failure")
+    log = io.StringIO()
+    with pytest.raises(OSError, match="stop failed"):
+        finalize_run(None, None, receipt, tmp_path, Operator(), log)
+    saved = json.loads((tmp_path / "result.json").read_text())
+    assert calls == [tmp_path] and log.closed
+    assert saved["cleanup_confirmed"] and saved["status"] == "FAIL"
+    assert saved["error"] == "original training failure" and saved["operator_stop_error"] == "stop failed"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="requires POSIX SIGTERM semantics")
+def test_operator_ignoring_term_is_killed_before_cleanup(tmp_path, monkeypatch):
+    code = "import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); print('ready',flush=True); time.sleep(60)"
+    operator = subprocess.Popen([sys.executable, "-u", "-c", code], stdout=subprocess.PIPE, text=True)
+    cleaned = []
+    def cleanup(session, server, receipt, evidence):
+        assert operator.poll() is not None
+        cleaned.append(True)
+        receipt["cleanup_confirmed"] = True
+    monkeypatch.setattr(transport, "cleanup_owned", cleanup)
+    try:
+        assert operator.stdout.readline().strip() == "ready"
+        finalize_run(None, None, {"status": "PASS"}, tmp_path, operator, stop_timeout=0.1)
+        assert operator.returncode < 0 and cleaned == [True]
+    finally:
+        if operator.poll() is None:
+            operator.kill()
+            operator.wait()
+        operator.stdout.close()
+
+
+def test_cleanup_waits_for_fault_and_crd_deletion(tmp_path, monkeypatch):
+    fault = "/apis/ft.hygon.io/v1alpha1/namespaces/test-ns/faultevents/case-1"
+    crd = "/apis/apiextensions.k8s.io/v1/customresourcedefinitions/faultevents.ft.hygon.io"
+    calls = []
+    pending = {fault: 2, crd: 2}
+    deleting = set()
+    gone = set()
+
+    class API(BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path == "/api/v1/nodes/node-a":
+                self.reply(200, {"spec": {"taints": []}})
+            elif self.path in pending:
+                if self.path in deleting:
+                    pending[self.path] -= 1
+                    if pending[self.path] <= 0:
+                        gone.add(self.path)
+                self.reply(404 if self.path in gone else 200, {"metadata": {"deletionTimestamp": "pending"}})
+            elif self.path == "/apis/ft.hygon.io/v1alpha1/faultevents":
+                self.reply(200, {"items": [] if fault in gone else [{"metadata": {"uid": "fault-uid"}}]})
+            elif "/events?" in self.path or "/pods?" in self.path:
+                self.reply(200, {"items": []})
+            else:
+                self.reply(404, {})
+
+        def do_DELETE(self):
+            deleting.add(self.path)
+            self.reply(200, {})
+
+        def reply(self, status, body):
+            self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            calls.append((self.command, self.path, status))
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(body).encode())
+
+        def log_message(self, *args):
+            pass
+
+    monkeypatch.setattr(transport.time, "sleep", lambda _: None)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), API)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    receipt = dict(name="case-1", namespace="test-ns", primary_node="node-a", taint_key="st.ft.hygon.io/case-1",
+                   created_crd_uid="crd-uid", injection={"fault_event_uid": "fault-uid"})
+    try:
+        with requests.Session() as session:
+            session.trust_env = False
+            cleanup_owned(session, "http://127.0.0.1:" + str(server.server_port), receipt, tmp_path)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+    assert fault in gone and crd in gone and receipt["cleanup_confirmed"]
+    assert calls.index(("GET", fault, 404)) < calls.index(("DELETE", crd, 200))
+    assert ("GET", crd, 404) in calls

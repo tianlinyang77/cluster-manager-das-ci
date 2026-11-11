@@ -5,6 +5,7 @@ from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
+import subprocess
 import time
 from urllib.parse import urlencode
 
@@ -68,6 +69,7 @@ def cleanup_owned(session, server, receipt, evidence):
         response.raise_for_status()
         return response.json()
 
+    receipt["cleanup_confirmed"] = False
     name, ns = receipt["name"], receipt["namespace"]
     node_path = "/api/v1/nodes/" + receipt["primary_node"]
     node = request("GET", node_path)
@@ -92,10 +94,12 @@ def cleanup_owned(session, server, receipt, evidence):
         request("DELETE", cm, json={"preconditions": {"uid": receipt["configmap_uid"]}})
     if receipt.get("injection", {}).get("fault_event_uid"):
         request("DELETE", fault, json={"preconditions": {"uid": receipt["injection"]["fault_event_uid"]}})
+        wait_deleted(session, server, fault)
     if receipt.get("created_crd_uid") and session.get(server + crd, timeout=(5, 20)).status_code != 404:
         if not request("GET", "/apis/ft.hygon.io/v1alpha1/faultevents")["items"]:
             request("DELETE", crd, json={"preconditions": {"uid": receipt["created_crd_uid"]}})
             receipt["test_crd_delete_requested"] = True
+            wait_deleted(session, server, crd)
     for _ in range(45):
         job_absent = session.get(server + jobs + "/" + name, timeout=(5, 20)).status_code == 404
         cm_absent = session.get(server + cm, timeout=(5, 20)).status_code == 404
@@ -104,3 +108,39 @@ def cleanup_owned(session, server, receipt, evidence):
             return
         time.sleep(1)
     raise RuntimeError("owned resources were not confirmed removed")
+
+
+def wait_deleted(session, server, path):
+    for _ in range(45):
+        response = session.get(server + path, timeout=(5, 20))
+        if response.status_code == 404:
+            return
+        response.raise_for_status()
+        time.sleep(1)
+    raise RuntimeError("resource deletion was not confirmed: " + path)
+
+
+def finalize_run(session, server, receipt, evidence, operator=None, operator_log=None, stop_timeout=15):
+    try:
+        if operator is not None:
+            operator.terminate()
+            try:
+                operator.wait(timeout=stop_timeout)
+            except subprocess.TimeoutExpired:
+                operator.kill()
+                operator.wait(timeout=5)
+    except Exception as error:
+        receipt.update(status="FAIL", operator_stop_error=str(error))
+        raise
+    finally:
+        try:
+            if operator_log is not None:
+                operator_log.close()
+        finally:
+            try:
+                cleanup_owned(session, server, receipt, evidence)
+            except Exception as error:
+                receipt.update(status="FAIL", cleanup_error=str(error))
+                raise
+            finally:
+                (Path(evidence) / "result.json").write_text(json.dumps(receipt, indent=2), encoding="utf-8")

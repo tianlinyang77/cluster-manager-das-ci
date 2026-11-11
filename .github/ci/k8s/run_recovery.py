@@ -13,7 +13,7 @@ import sys
 import time
 
 import yaml
-from transport import kube_api, exec_in_pod, cleanup_owned
+from transport import kube_api, exec_in_pod, finalize_run
 
 
 def cancelled(signum, frame):
@@ -259,16 +259,5 @@ with kube_api() as (session, server):
         receipt.update(status="FAIL", error=str(error) or type(error).__name__)
         raise
     finally:
-        if operator is not None:
-            operator.terminate()
-            operator.wait(timeout=15)
-        if operator_log is not None:
-            operator_log.close()
-        try:
-            cleanup_owned(session, server, receipt, evidence)
-        except Exception as error:
-            receipt.update(status="FAIL", cleanup_error=str(error))
-            raise
-        finally:
-            save()
+        finalize_run(session, server, receipt, evidence, operator, operator_log)
         print(json.dumps({"cleanup_confirmed": receipt.get("cleanup_confirmed", False), "evidence": str(evidence)}), flush=True)

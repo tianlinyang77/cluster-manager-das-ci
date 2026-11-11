@@ -27,7 +27,7 @@ concurrency:
 jobs:
   unit:
     name: Kubernetes ST control regressions
-    runs-on: hygon-cpu
+    runs-on: hygon-build
     container:
       image: ${{ vars.ST_TRAINING_IMAGE }}
     timeout-minutes: 10
@@ -53,7 +53,7 @@ jobs:
     name: Cross-node checkpoint recovery
     needs: unit
     # The controller must not reserve the cards needed by the training Pods.
-    runs-on: hygon-cpu
+    runs-on: hygon-build
     container:
       image: ${{ vars.ST_TRAINING_IMAGE }}
     timeout-minutes: 90
