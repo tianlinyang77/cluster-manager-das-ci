@@ -1,18 +1,18 @@
-name: PR Test (hcu_resiliency_ext)
+name: PR Test (nvidia_resiliency_ext)
 
 on:
   pull_request_target:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
-      - "hcu_resiliency_ext/**"
+      - "nvidia_resiliency_ext/**"
       - ".github/actionlint.yaml"
       - ".github/workflows/_run-unit-tests.yml"
-      - ".github/workflows/pr-test-hcu-resiliency-ext.yml"
+      - ".github/workflows/pr-test-nvidia-resiliency-ext.yml"
       - ".gitmodules"
 
 concurrency:
-  group: pr-test-hcu-resiliency-ext-${{ github.event.pull_request.number }}
+  group: pr-test-nvidia-resiliency-ext-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 permissions:
@@ -22,6 +22,6 @@ jobs:
   unit:
     uses: ./.github/workflows/_run-unit-tests.yml
     with:
-      module-id: hcu-resiliency-ext
-      test-name: hcu_resiliency_ext unit tests
-      test-path: hcu_resiliency_ext/tests
+      module-id: nvidia-resiliency-ext
+      test-name: nvidia_resiliency_ext unit tests
+      test-path: nvidia_resiliency_ext/tests

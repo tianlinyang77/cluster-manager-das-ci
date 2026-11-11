@@ -25,26 +25,44 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Optional
 
-from nv_one_logger.api.config import LoggerConfig, OneLoggerConfig
-from nv_one_logger.core.attributes import Attributes
-from nv_one_logger.core.event import Event
-from nv_one_logger.core.span import StandardSpanName
-from nv_one_logger.exporter.file_exporter import FileExporter
-from nv_one_logger.training_telemetry.api.training_telemetry_provider import (
-    TrainingTelemetryProvider,
-)
-
-# WandB exporter is an optional dependency
-try:
-    from nv_one_logger.wandb.exporter.wandb_exporter import Config as WandBConfig
-    from nv_one_logger.wandb.exporter.wandb_exporter import WandBExporterAsync
-
-    WANDB_AVAILABLE = True
-except ImportError:
-    WANDB_AVAILABLE = False
-
 import socket
 from nvidia_resiliency_ext.shared_utils.log_manager import LogConfig
+
+
+def _telemetry_enabled() -> bool:
+    flag = os.environ.get("NVRX_ENABLE_TELEMETRY")
+    if flag is not None:
+        return flag.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(os.environ.get("NVRX_TELEMETRY_EXPORTER", "").strip())
+
+
+ONE_LOGGER_AVAILABLE = False
+_ONE_LOGGER_IMPORT_ERROR = None
+if _telemetry_enabled():
+    try:
+        from nv_one_logger.api.config import LoggerConfig, OneLoggerConfig
+        from nv_one_logger.core.attributes import Attributes
+        from nv_one_logger.core.event import Event
+        from nv_one_logger.core.span import StandardSpanName
+        from nv_one_logger.exporter.file_exporter import FileExporter
+        from nv_one_logger.training_telemetry.api.training_telemetry_provider import (
+            TrainingTelemetryProvider,
+        )
+
+        ONE_LOGGER_AVAILABLE = True
+    except (ImportError, ModuleNotFoundError) as exc:
+        _ONE_LOGGER_IMPORT_ERROR = exc
+
+# WandB exporter is an optional dependency, even when core telemetry is enabled.
+WANDB_AVAILABLE = False
+if ONE_LOGGER_AVAILABLE:
+    try:
+        from nv_one_logger.wandb.exporter.wandb_exporter import Config as WandBConfig
+        from nv_one_logger.wandb.exporter.wandb_exporter import WandBExporterAsync
+
+        WANDB_AVAILABLE = True
+    except ImportError:
+        pass
 
 
 
@@ -55,8 +73,11 @@ class ProfilingEvent(Enum):
     WORKER_TERMINATED = "worker_terminated"
     RENDEZVOUS_STARTED = "rendezvous_started"
     RENDEZVOUS_COMPLETED = "rendezvous_completed"
+    HEALTH_CHECK_COMPLETED = "health_check_completed"
     WORKER_START_STARTED = "worker_start_started"
     WORKER_START_COMPLETED = "worker_start_completed"
+    ATTRIBUTION_GET_STARTED = "attribution_get_started"
+    ATTRIBUTION_GET_COMPLETED = "attribution_get_completed"
 
 
 class FaultToleranceProfiler:
@@ -67,6 +88,15 @@ class FaultToleranceProfiler:
         # Initialize logger as a member to avoid module-level logger issues
         self._logger = logging.getLogger(LogConfig.name)
         self._app_span = None  # Will hold the application span for attaching events
+
+        if not ONE_LOGGER_AVAILABLE:
+            if _telemetry_enabled() and _ONE_LOGGER_IMPORT_ERROR is not None:
+                self._logger.warning(
+                    "One Logger telemetry is enabled but unavailable; "
+                    "falling back to standard profiling logs: %s",
+                    _ONE_LOGGER_IMPORT_ERROR,
+                )
+            return
         
         # Initialize TrainingTelemetryProvider singleton if not already configured
         if not TrainingTelemetryProvider.instance().one_logger_ready:
@@ -210,6 +240,8 @@ class FaultToleranceProfiler:
         We don't want telemetry failures to disrupt fault tolerance operations.
         """
         # Check if training telemetry is configured and ready
+        if not ONE_LOGGER_AVAILABLE:
+            return
         if not TrainingTelemetryProvider.instance().one_logger_ready:
             return
 
@@ -260,8 +292,29 @@ class FaultToleranceProfiler:
         return event_id
 
 
-# Global profiler instance
-_global_profiler = FaultToleranceProfiler()
+    def set_cycle(self, cycle: int) -> None:
+        """Set the current cycle without allowing it to move backwards."""
+
+        if cycle >= self._current_cycle:
+            self._current_cycle = cycle
+        else:
+            self._logger.warning(
+                "Attempted to set profiler cycle to %s, below current cycle %s; ignoring",
+                cycle,
+                self._current_cycle,
+            )
+
+
+# Lazy initialization keeps importing the fault-tolerance package independent
+# of the optional One Logger distributions.
+_global_profiler = None
+
+
+def _get_global_profiler() -> FaultToleranceProfiler:
+    global _global_profiler
+    if _global_profiler is None:
+        _global_profiler = FaultToleranceProfiler()
+    return _global_profiler
 
 
 def record_profiling_event(
@@ -279,4 +332,16 @@ def record_profiling_event(
     Returns:
         Event ID string
     """
-    return _global_profiler.record_event(event, node_id, rank)
+    return _get_global_profiler().record_event(event, node_id, rank)
+
+
+def get_profiling_cycle() -> int:
+    """Return the current fault-tolerance profiling cycle."""
+
+    return _get_global_profiler()._current_cycle
+
+
+def set_profiling_cycle(cycle: int) -> None:
+    """Set the current fault-tolerance profiling cycle."""
+
+    _get_global_profiler().set_cycle(cycle)

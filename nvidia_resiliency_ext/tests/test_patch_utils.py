@@ -5,8 +5,8 @@ from types import ModuleType
 
 import pytest
 
-from hcu_resiliency_ext.hcu_resiliency_ext.adaptor.module_redirector import ModuleRedirector
-from hcu_resiliency_ext.hcu_resiliency_ext.adaptor.patch_utils import ImportHookPatch, Patch
+from hcu_resiliency_ext.adaptor.module_redirector import ModuleRedirector
+from hcu_resiliency_ext.adaptor.patch_utils import ImportHookPatch, Patch
 
 
 @pytest.fixture(autouse=True)

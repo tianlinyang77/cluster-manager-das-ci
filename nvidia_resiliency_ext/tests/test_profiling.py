@@ -13,6 +13,7 @@ def _package(name):
 
 
 def _install_profiling_dependencies(monkeypatch):
+    monkeypatch.setenv("NVRX_ENABLE_TELEMETRY", "1")
     class Config:
         def __init__(self, **kwargs):
             self.__dict__.update(kwargs)
@@ -100,7 +101,7 @@ def _install_profiling_dependencies(monkeypatch):
 
 def test_profiler_records_cycle_and_stable_event_id(monkeypatch):
     _install_profiling_dependencies(monkeypatch)
-    module_name = "hcu_resiliency_ext.hcu_resiliency_ext.shared_utils.profiling"
+    module_name = "hcu_resiliency_ext.shared_utils.profiling"
     sys.modules.pop(module_name, None)
     profiling = importlib.import_module(module_name)
     profiler = profiling.FaultToleranceProfiler()
@@ -118,7 +119,7 @@ def test_profiler_records_cycle_and_stable_event_id(monkeypatch):
 
 def test_profiler_mpi_session_tag_uses_job_id(monkeypatch):
     _install_profiling_dependencies(monkeypatch)
-    module_name = "hcu_resiliency_ext.hcu_resiliency_ext.shared_utils.profiling"
+    module_name = "hcu_resiliency_ext.shared_utils.profiling"
     sys.modules.pop(module_name, None)
     profiling = importlib.import_module(module_name)
     monkeypatch.setenv("MPI_JOB_ID", "mpi-job-42")
