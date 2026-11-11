@@ -118,7 +118,7 @@ jobs:
         shell: bash
         run: python3 -B controller/.github/ci/k8s/collect.py
 
-      - name: Recheck owned resources and remove the test taint
+      - name: Remove owned resources, test taint and shared checkpoints
         if: always()
         shell: bash
         run: |

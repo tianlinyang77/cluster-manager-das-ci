@@ -262,11 +262,11 @@ PR 训练源码只在不挂载 ServiceAccount token、不接收 kubeconfig 或 G
 3. 注入一个模拟 `NodeHealthCheckFailed` FaultEvent。原生 FT Operator 添加本轮唯一 NoSchedule taint，仅删除指定测试 Pod。
 4. Volcano 依据 PodFailed/PodEvicted 自动 RestartJob；注入前后不修改调度模板。必须确认新 Pod UID、备用节点、完整 worker、非零 checkpoint 加载及更大的后续迭代。
 5. 训练跑完 1000 步且退出码为 0。删除训练 Pod 后，由独立控制容器读取持久化 checkpoint 文件。
-6. 停止临时 Operator，按登记 UID 删除本轮对象，只撤销本轮 taint。日志、版本、文件清单和结果上传 artifact，权重留在共享盘。
+6. 停止临时 Operator，按登记 UID 删除本轮对象，撤销本轮 taint。确认训练 Pod 已删除并采集持久化文件证据后，清理本轮 `checkpoints` 目录，包含 global 和 local，并记录 `checkpoint_cleanup_confirmed=true`。日志、版本、删除前的文件清单和结果上传 artifact。
 
 NoSchedule 不驱逐其他现有 Pod，但测试期间其他新任务也会避开模拟故障节点，需事先协调测试池。
 此场景覆盖事件处理、节点隔离、跨机调度和 checkpoint 恢复；真实断电、NHC 硬件探测和 local checkpoint 未覆盖。
-固定 concurrency group 串行运行，cancel-in-progress 为 false。取消时正常收尾，再由 always 步骤补偿清理。
+固定 concurrency group 串行运行，cancel-in-progress 为 false。成功、失败和取消均由 always 步骤补偿清理；checkpoint 在本轮 Job 和 Pod 确认删除后清理，删除失败会使 CI 失败。
 控制 runner 整体失联后，恢复访问并对原始记录执行：
 
 ```bash

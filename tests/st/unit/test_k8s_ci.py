@@ -2,9 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 """CI input boundaries and the exact API operations used by compensating cleanup."""
 import importlib.util
+from contextlib import nullcontext
 import io
 import json
 import os
+import runpy
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path, PurePosixPath
 import sys
@@ -250,3 +252,47 @@ def test_cleanup_waits_for_fault_and_crd_deletion(tmp_path, monkeypatch):
     assert fault in gone and crd in gone and receipt["cleanup_confirmed"]
     assert calls.index(("GET", fault, 404)) < calls.index(("DELETE", crd, 200))
     assert ("GET", crd, 404) in calls
+
+
+@pytest.mark.parametrize("failure", [None, "cluster", "owner"])
+def test_cleanup_entry_removes_only_owned_checkpoints_after_pods_are_gone(tmp_path, monkeypatch, failure):
+    case = tmp_path / "case-1"
+    checkpoints = case / "checkpoints"
+    for kind in ("global", "local"):
+        directory = checkpoints / kind
+        directory.mkdir(parents=True)
+        (directory / "weights.bin").write_bytes(b"checkpoint fixture")
+    (case / "RECOVERY_RUN_ID").write_text("other-case" if failure == "owner" else case.name)
+    (case / "training.log").write_text("resumed training completed")
+    other = tmp_path / "other-case/checkpoints"
+    other.mkdir(parents=True)
+    (other / "weights.bin").write_bytes(b"other run")
+    evidence = tmp_path / "evidence"
+    evidence.mkdir()
+    (evidence / "active-crossnode.json").write_text(json.dumps({"evidence": str(evidence)}))
+    result = evidence / "result.json"
+    result.write_text(json.dumps(dict(name=case.name, case=str(case), status="PASS")))
+    (evidence / "validation-summary.json").write_text("checkpoint evidence")
+    monkeypatch.setenv("ST_K8S_ARTIFACTS", str(evidence))
+    monkeypatch.setattr(transport, "kube_api", lambda: nullcontext((None, None)))
+
+    def cleanup(session, server, receipt, evidence):
+        if failure == "cluster":
+            raise RuntimeError("training Pods remain")
+        receipt["cleanup_confirmed"] = True
+
+    monkeypatch.setattr(transport, "cleanup_owned", cleanup)
+    if failure:
+        with pytest.raises((RuntimeError, ValueError)):
+            runpy.run_path(str(SCRIPTS / "cleanup.py"))
+        assert checkpoints.exists()
+        saved = json.loads(result.read_text())
+        assert saved["status"] == "FAIL" and not saved["checkpoint_cleanup_confirmed"]
+    else:
+        runpy.run_path(str(SCRIPTS / "cleanup.py"))
+        runpy.run_path(str(SCRIPTS / "cleanup.py"))
+        assert not checkpoints.exists()
+        assert json.loads(result.read_text())["checkpoint_cleanup_confirmed"]
+    assert (other / "weights.bin").read_bytes() == b"other run"
+    assert (case / "training.log").read_text() == "resumed training completed"
+    assert (evidence / "validation-summary.json").read_text() == "checkpoint evidence"
