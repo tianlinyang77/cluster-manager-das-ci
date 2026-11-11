@@ -3,7 +3,7 @@
 import sys
 from types import ModuleType
 
-from hcu_resiliency_ext.hcu_resiliency_ext.adaptor.nre_adaptor import NreAdaptation
+from hcu_resiliency_ext.adaptor.nre_adaptor import NreAdaptation
 
 
 def test_adaptation_register_and_apply_replaces_target():

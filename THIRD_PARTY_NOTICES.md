@@ -25,8 +25,8 @@ file. Hygon modifications are also distributed under Apache-2.0.
 
 - Project: NVIDIA Resiliency Extension
 - Upstream: https://github.com/NVIDIA/nvidia-resiliency-ext
-- Revision: `5eb5f7ec84e9aa1bf45c403b06d6ef766ea6784a`
-- Local path: `hcu_resiliency_ext/nvidia_resiliency_ext`
+- Revision: `0f034639db696ecd4b43311c63f7a0e693aa4d75`
+- Local path: `nvidia_resiliency_ext/nvidia_resiliency_ext`
 - Distribution form: Git submodule
 - License: Apache License 2.0 (`Apache-2.0`)
 
@@ -37,7 +37,7 @@ builds must initialize that exact Gitlink revision and must not use
 
 ## NVIDIA profiling-derived implementation
 
-- Local file: `hcu_resiliency_ext/hcu_resiliency_ext/shared_utils/profiling.py`
+- Local file: `nvidia_resiliency_ext/hcu_resiliency_ext/shared_utils/profiling.py`
 - License: Apache License 2.0 (`Apache-2.0`)
 - Upstream copyright: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES
 - Modifications: adapted by Hygon Information Technology Co., Ltd. for HCU

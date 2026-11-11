@@ -8,7 +8,7 @@ There is no nightly workflow and no custom PR planner. A separate cluster ST wor
 | Workflow | Changed path | Test directory |
 | --- | --- | --- |
 | `PR Test (hcu-training-reliability)` | `hcu-training-reliability/**` | `hcu-training-reliability/test/unit` |
-| `PR Test (hcu_resiliency_ext)` | `hcu_resiliency_ext/**`, `.gitmodules` | `hcu_resiliency_ext/tests` |
+| `PR Test (nvidia_resiliency_ext)` | `nvidia_resiliency_ext/**`, `.gitmodules` | `nvidia_resiliency_ext/tests` |
 | `PR Test (hcu-envcheck)` | `hcu-envcheck/**` | `hcu-envcheck/tests` |
 | `PR Test (hygon-ft-k8s)` | `hygon-ft-k8s/**` | `hygon-ft-k8s/tests` |
 | `PR Test (stack-analyzer)` | `stack-analyzer/**` | `stack-analyzer/tests` |

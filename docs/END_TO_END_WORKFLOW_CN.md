@@ -21,7 +21,7 @@ SPDX-License-Identifier: Apache-2.0
     stack-analyzer
 ```
 
-`hcu_resiliency_ext` 是第三方容错库适配层，不是上述主流程的必选组件。
+`nvidia_resiliency_ext` 是第三方容错库适配与构建子项目，不是上述主流程的必选组件。
 
 ### 第一步：执行训练前检查
 

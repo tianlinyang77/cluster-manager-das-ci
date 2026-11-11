@@ -4,6 +4,7 @@ import os
 import abc
 import sys
 import traceback
+import importlib.util
 
 
 class NreAdaptation:
@@ -97,8 +98,54 @@ class CoreAdaptation(NreAdaptationABC):
     """
     
     def execute(self):
-        # 使用模块重定向方案
+        # Profiling telemetry is optional. Keep the upstream implementation
+        # unless it was explicitly enabled and the split One Logger packages
+        # are available.
+        if not self.telemetry_enabled():
+            return
+        if not self.one_logger_available():
+            print(
+                "WARNING: NVRX telemetry is enabled, but "
+                "nv-one-logger-core and/or nv-one-logger-training-telemetry "
+                "is not installed; using upstream profiling instead.",
+                file=sys.stderr,
+            )
+            return
+
         self.redirect_profiling_module()
+
+    @staticmethod
+    def telemetry_enabled() -> bool:
+        """Return whether HCU One Logger profiling was explicitly requested.
+
+        ``NVRX_ENABLE_TELEMETRY`` is authoritative. For backwards
+        compatibility, setting the existing exporter variable also enables
+        telemetry when the new switch is absent.
+        """
+
+        flag = os.environ.get("NVRX_ENABLE_TELEMETRY")
+        if flag is not None:
+            return flag.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(os.environ.get("NVRX_TELEMETRY_EXPORTER", "").strip())
+
+    @staticmethod
+    def one_logger_available() -> bool:
+        """Check the split One Logger distributions without importing them."""
+
+        required_modules = (
+            "nv_one_logger.api.config",
+            "nv_one_logger.core.attributes",
+            "nv_one_logger.core.event",
+            "nv_one_logger.core.span",
+            "nv_one_logger.exporter.file_exporter",
+            "nv_one_logger.training_telemetry.api.training_telemetry_provider",
+        )
+        try:
+            return all(
+                importlib.util.find_spec(name) is not None for name in required_modules
+            )
+        except (ImportError, ModuleNotFoundError, ValueError):
+            return False
     
     def redirect_profiling_module(self):
         """使用模块重定向替换整个 profiling 模块"""
